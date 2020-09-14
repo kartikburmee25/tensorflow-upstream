@@ -81,12 +81,8 @@ class MathTest(PForTestCase, parameterized.TestCase):
     ]
     self._test_unary_cwise_ops(complex_ops, True)
 
+  @test.disable_for_rocm(skip_message='This fails on ROCm.') #...see JIRA ticket 236756
   def test_unary_cwise_real_ops_1(self):
-    if test.is_built_with_rocm():
-      # TODO(rocm):
-      # This fails on ROCm...see JIRA ticket 236756
-      return
-
     real_ops = [
         lambda x: math_ops.acosh(1 + math_ops.square(x)),
         math_ops.abs,
@@ -266,6 +262,9 @@ class MathTest(PForTestCase, parameterized.TestCase):
 
     self._test_loop_fn(loop_fn, 4)
 
+  @test_util.run_without_tensor_float_32(
+      "Calls matmul in parallel for-loop and compares result to calling matmul "
+      "in sequential for-loop")
   def test_matmul(self):
     for tr_a in (True, False):
       for tr_b in (True, False):
@@ -750,6 +749,9 @@ class LinalgTest(PForTestCase):
 
     self._test_loop_fn(loop_fn, 2)
 
+  @test_util.run_without_tensor_float_32(
+      "Calls einsum in parallel for-loop and compares result to calling einsum "
+      "in sequential for-loop")
   def test_einsum(self):
     b = 10
     x_series = random_ops.random_uniform([b, 9, 9])

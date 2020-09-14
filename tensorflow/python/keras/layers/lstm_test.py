@@ -25,7 +25,6 @@ import numpy as np
 
 from tensorflow.python import keras
 from tensorflow.python.eager import context
-from tensorflow.python.framework import test_util as tf_test_util
 from tensorflow.python.keras import keras_parameterized
 from tensorflow.python.keras import testing_utils
 from tensorflow.python.platform import test
@@ -47,10 +46,9 @@ class LSTMLayerTest(keras_parameterized.TestCase):
                 'return_sequences': True},
         input_shape=(num_samples, timesteps, embedding_dim))
 
-  @tf_test_util.run_v2_only
+  @test.disable_for_rocm(skip_message='Double type is yet not supported in ROCm')
+  @testing_utils.run_v2_only
   def test_float64_LSTM(self):
-    if test.is_built_with_rocm():
-      self.skipTest('Double type is yet not supported in ROCm')
     num_samples = 2
     timesteps = 3
     embedding_dim = 4
@@ -143,11 +141,10 @@ class LSTMLayerTest(keras_parameterized.TestCase):
     self.assertEqual(layer.cell.recurrent_kernel.constraint, r_constraint)
     self.assertEqual(layer.cell.bias.constraint, b_constraint)
 
+  @test.disable_for_rocm(skip_message='Skipping the test as ROCm MIOpen '
+                                      'does not support padded input.')
   @parameterized.parameters([True, False])
   def test_with_masking_layer_LSTM(self, unroll):
-    if test.is_built_with_rocm():
-      self.skipTest(
-          'Skipping the test as ROCm MIOpen does not support padded input.')
     layer_class = keras.layers.LSTM
     inputs = np.random.random((2, 3, 4))
     targets = np.abs(np.random.random((2, 3, 5)))
@@ -386,10 +383,9 @@ class LSTMLayerTest(keras_parameterized.TestCase):
     else:
       self.assertEqual(len(layer.get_losses_for(x)), 1)
 
+  @test.disable_for_rocm(skip_message='Skipping the test as ROCm MIOpen '
+                                      'does not support padded input.')
   def test_statefulness_LSTM(self):
-    if test.is_built_with_rocm():
-      self.skipTest(
-          'Skipping the test as ROCm MIOpen does not support padded input.')
     num_samples = 2
     timesteps = 3
     embedding_dim = 4

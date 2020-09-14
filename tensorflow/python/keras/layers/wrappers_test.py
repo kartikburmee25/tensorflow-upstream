@@ -44,7 +44,6 @@ from tensorflow.python.ops.ragged import ragged_tensor
 from tensorflow.python.platform import test
 from tensorflow.python.training.tracking import util as trackable_util
 from tensorflow.python.util import nest
-from tensorflow.python.util import object_identity
 
 
 class _RNNCellWithConstants(keras.layers.Layer):
@@ -130,10 +129,11 @@ class TimeDistributedTest(keras_parameterized.TestCase):
 
     # check whether the model variables are present in the
     # trackable list of objects
-    checkpointed_objects = object_identity.ObjectIdentitySet(
-        trackable_util.list_objects(model))
+    checkpointed_object_ids = {
+        id(o) for o in trackable_util.list_objects(model)
+    }
     for v in model.variables:
-      self.assertIn(v, checkpointed_objects)
+      self.assertIn(id(v), checkpointed_object_ids)
 
   def test_timedistributed_static_batch_size(self):
     model = keras.models.Sequential()
@@ -492,10 +492,11 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
 
       # check whether the model variables are present in the
       # trackable list of objects
-      checkpointed_objects = object_identity.ObjectIdentitySet(
-          trackable_util.list_objects(model))
+      checkpointed_object_ids = {
+          id(o) for o in trackable_util.list_objects(model)
+      }
       for v in model.variables:
-        self.assertIn(v, checkpointed_objects)
+        self.assertIn(id(v), checkpointed_object_ids)
 
       # test compute output shape
       ref_shape = model.layers[-1].output.shape
@@ -938,13 +939,10 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
           input_layer.compute_output_shape([None, 2, 4]).as_list(),
           [None, 2, 16])
 
+  @test.disable_for_rocm(skip_message='Skipping the test as ROCm '
+                                      'MIOpen does not support '
+                                      'padded input yet.')
   def test_Bidirectional_last_output_with_masking(self):
-    if test.is_built_with_rocm():
-      # testcase uses input and/or output sequences which require padding
-      # leading to the following error on ROCm platform
-      # ROCm MIOpen only supports packed input output
-      # Skip this subtest for now
-      self.skipTest('Test not supported on the ROCm platform')
     rnn = keras.layers.LSTM
     samples = 2
     dim = 5
@@ -970,14 +968,11 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
       self.assertLen(y, 5)
       self.assertAllClose(y[0], np.concatenate([y[1], y[3]], axis=1))
 
+  @test.disable_for_rocm(skip_message='Skipping the test as ROCm '
+                                      'MIOpen does not support '
+                                      'padded input yet.')
   @parameterized.parameters([keras.layers.LSTM, keras.layers.GRU])
   def test_Bidirectional_sequence_output_with_masking(self, rnn):
-    if test.is_built_with_rocm():
-      # testcase uses input and/or output sequences which require padding
-      # leading to the following error on ROCm platform
-      # ROCm MIOpen only supports packed input output
-      # Skip this subtest for now
-      self.skipTest('Test not supported on the ROCm platform')
     samples = 2
     dim = 5
     timesteps = 3
@@ -1030,10 +1025,11 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
 
     # check whether the model variables are present in the
     # trackable list of objects
-    checkpointed_objects = object_identity.ObjectIdentitySet(
-        trackable_util.list_objects(model))
+    checkpointed_object_ids = {
+        id(o) for o in trackable_util.list_objects(model)
+    }
     for v in model.variables:
-      self.assertIn(v, checkpointed_objects)
+      self.assertIn(id(v), checkpointed_object_ids)
 
     # test compute output shape
     ref_shape = model.layers[-1].output.shape
@@ -1152,7 +1148,7 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
         epochs=1,
         batch_size=10)
 
-  @tf_test_util.run_v2_only
+  @testing_utils.run_v2_only
   def test_wrapped_rnn_cell(self):
     # See https://github.com/tensorflow/tensorflow/issues/26581.
     batch = 20
@@ -1177,11 +1173,10 @@ class BidirectionalTest(test.TestCase, parameterized.TestCase):
         epochs=1,
         batch_size=10)
 
+  @test.disable_for_rocm(skip_message='Skipping the test as ROCm RNN does not '
+                                      'support ragged tensors yet.')
   @parameterized.parameters(['ave', 'concat', 'mul'])
   def test_Bidirectional_ragged_input(self, merge_mode):
-    if test.is_built_with_rocm():
-      # ragged tenors are not supported in ROCM RNN implementation
-      self.skipTest('Test not supported on the ROCm platform')
     np.random.seed(100)
     rnn = keras.layers.LSTM
     units = 3

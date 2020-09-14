@@ -356,12 +356,6 @@ def tf_copts(
 def tf_openmp_copts():
     return (if_mkl_lnx_x64(["-fopenmp"]) + if_mkldnn_threadpool(["-fno-openmp"]))
 
-def tfe_xla_copts():
-    return select({
-        "//tensorflow:with_xla_support": ["-DTENSORFLOW_EAGER_USE_XLA"],
-        "//conditions:default": [],
-    })
-
 def tf_opts_nortti():
     return [
         "-fno-rtti",
@@ -404,7 +398,7 @@ def tf_defines_nortti_if_lite_protos():
 
 # Given a list of "op_lib_names" (a list of files in the ops directory
 # without their .cc extensions), generate a library for that file.
-def tf_gen_op_libs(op_lib_names, deps = None, is_external = True):
+def tf_gen_op_libs(op_lib_names, deps = None, is_external = True, compatible_with = None):
     # Make library out of each op so it can also be used to generate wrappers
     # for various languages.
     if not deps:
@@ -415,6 +409,7 @@ def tf_gen_op_libs(op_lib_names, deps = None, is_external = True):
             copts = tf_copts(is_external = is_external),
             srcs = ["ops/" + n + ".cc"],
             deps = deps + [clean_dep("//tensorflow/core:framework")],
+            compatible_with = compatible_with,
             visibility = ["//visibility:public"],
             alwayslink = 1,
             linkstatic = 1,
@@ -1648,77 +1643,6 @@ def _get_transitive_headers(hdrs, deps):
         transitive = [dep[CcInfo].compilation_context.headers for dep in deps],
     )
 
-# Bazel rules for building swig files.
-def _py_wrap_cc_impl(ctx):
-    srcs = ctx.files.srcs
-    if len(srcs) != 1:
-        fail("Exactly one SWIG source file label must be specified.", "srcs")
-    module_name = ctx.attr.module_name
-    src = ctx.files.srcs[0]
-    inputs = _get_transitive_headers([src] + ctx.files.swig_includes, ctx.attr.deps)
-    inputs = depset(ctx.files._swiglib, transitive = [inputs])
-    inputs = depset(ctx.files.toolchain_deps, transitive = [inputs])
-    swig_include_dirs = depset(_get_repository_roots(ctx, inputs))
-    swig_include_dirs = depset(sorted([f.dirname for f in ctx.files._swiglib]), transitive = [swig_include_dirs])
-    args = [
-        "-c++",
-        "-python",
-        "-module",
-        module_name,
-        "-o",
-        ctx.outputs.cc_out.path,
-        "-outdir",
-        ctx.outputs.py_out.dirname,
-    ]
-    args += ["-l" + f.path for f in ctx.files.swig_includes]
-    args += ["-I" + i for i in swig_include_dirs.to_list()]
-    args.append(src.path)
-    outputs = [ctx.outputs.cc_out, ctx.outputs.py_out]
-    ctx.actions.run(
-        executable = ctx.executable._swig,
-        arguments = args,
-        inputs = inputs,
-        outputs = outputs,
-        mnemonic = "PythonSwig",
-        progress_message = "SWIGing " + src.path,
-    )
-    return struct(files = depset(outputs))
-
-_py_wrap_cc = rule(
-    attrs = {
-        "srcs": attr.label_list(
-            mandatory = True,
-            allow_files = True,
-        ),
-        "swig_includes": attr.label_list(
-            allow_files = True,
-        ),
-        "deps": attr.label_list(
-            allow_files = True,
-            providers = [CcInfo],
-        ),
-        "toolchain_deps": attr.label_list(
-            allow_files = True,
-        ),
-        "module_name": attr.string(mandatory = True),
-        "py_module_name": attr.string(mandatory = True),
-        "_swig": attr.label(
-            default = Label("@swig//:swig"),
-            executable = True,
-            cfg = "host",
-        ),
-        "_swiglib": attr.label(
-            default = Label("@swig//:templates"),
-            allow_files = True,
-        ),
-    },
-    outputs = {
-        "cc_out": "%{module_name}.cc",
-        "py_out": "%{py_module_name}.py",
-    },
-    implementation = _py_wrap_cc_impl,
-)
-
 def _get_repository_roots(ctx, files):
     """Returns abnormal root directories under which files reside.
 
@@ -1819,16 +1743,18 @@ _transitive_parameters_library = rule(
 #   * Eigen: it's a header-only library.  Add it directly to your deps.
 #   * GRPC: add a direct dep on @com_github_grpc_grpc//:grpc++_public_hdrs.
 #
-def cc_header_only_library(name, deps = [], includes = [], extra_deps = [], **kwargs):
+def cc_header_only_library(name, deps = [], includes = [], extra_deps = [], compatible_with = None, **kwargs):
     _transitive_hdrs(name = name + "_gather", deps = deps)
     _transitive_parameters_library(
         name = name + "_gathered_parameters",
+        compatible_with = compatible_with,
         original_deps = deps,
     )
     cc_library(
         name = name,
         hdrs = [":" + name + "_gather"],
         includes = includes,
+        compatible_with = compatible_with,
         deps = [":" + name + "_gathered_parameters"] + extra_deps,
         **kwargs
     )
@@ -2554,7 +2480,7 @@ def cuda_py_tests(*args, **kwargs):
 #
 # Return a struct with fields (hdrs, srcs) containing the names of the
 # generated files.
-def tf_generate_proto_text_sources(name, srcs_relative_dir, srcs, protodeps = [], deps = [], visibility = None):
+def tf_generate_proto_text_sources(name, srcs_relative_dir, srcs, protodeps = [], deps = [], visibility = None, compatible_with = None):
     out_hdrs = (
         [
             p.replace(".proto", ".pb_text.h")
@@ -2567,6 +2493,7 @@ def tf_generate_proto_text_sources(name, srcs_relative_dir, srcs, protodeps = []
         srcs = srcs + protodeps + [clean_dep("//tensorflow/tools/proto_text:placeholder.txt")],
         outs = out_hdrs + out_srcs,
         visibility = visibility,
+        compatible_with = compatible_with,
         cmd =
             "$(location //tensorflow/tools/proto_text:gen_proto_text_functions) " +
             "$(@D) " + srcs_relative_dir + " $(SRCS)",
@@ -2579,6 +2506,7 @@ def tf_generate_proto_text_sources(name, srcs_relative_dir, srcs, protodeps = []
         name = name + "_hdrs",
         srcs = out_hdrs,
         visibility = visibility,
+        compatible_with = compatible_with,
     )
 
     cc_library(
@@ -2654,12 +2582,13 @@ def _local_genrule(**kwargs):
         **kwargs
     )
 
-def tf_version_info_genrule(name, out):
+def tf_version_info_genrule(name, out, compatible_with = None):
     # TODO(gunan): Investigate making this action hermetic so we do not need
     # to run it locally.
     _local_genrule(
         name = name,
         out = out,
+        compatible_with = compatible_with,
         exec_tool = "//tensorflow/tools/git:gen_git_source",
         srcs = [
             "@local_config_git//:gen/spec.json",
@@ -3005,3 +2934,12 @@ def tf_grpc_dependency():
 
 def tf_grpc_cc_dependency():
     return "//tensorflow:grpc++"
+
+def get_compatible_with_portable():
+    return []
+
+def filegroup(**kwargs):
+    return native.filegroup(**kwargs)
+
+def genrule(**kwargs):
+    return native.genrule(**kwargs)
