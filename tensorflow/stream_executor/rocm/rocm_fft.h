@@ -50,7 +50,8 @@ class ROCMFftPlan : public fft::Plan {
         fft_type_(fft::Type::kInvalid),
         scratch_(nullptr),
         scratch_size_bytes_(0),
-        is_initialized_(false) {}
+        is_initialized_(false),
+        scratch_allocator_(nullptr) {}
   ~ROCMFftPlan() override;
 
   // Get FFT direction in hipFFT based on FFT type.
@@ -79,6 +80,8 @@ class ROCMFftPlan : public fft::Plan {
   port::Status UpdateScratchAllocator(Stream* stream,
                                       ScratchAllocator* scratch_allocator);
 
+  ScratchAllocator* GetScratchAllocator() const { return scratch_allocator_; }
+
  protected:
   bool IsInitialized() const { return is_initialized_; }
 
@@ -89,6 +92,7 @@ class ROCMFftPlan : public fft::Plan {
   DeviceMemory<uint8> scratch_;
   size_t scratch_size_bytes_;
   bool is_initialized_;
+  ScratchAllocator* scratch_allocator_;
 };
 
 // FFT support for ROCM platform via rocFFT library.

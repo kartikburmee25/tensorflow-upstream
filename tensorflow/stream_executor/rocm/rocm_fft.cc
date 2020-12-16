@@ -30,6 +30,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/plugin_registry.h"
 #include "tensorflow/stream_executor/rocm/rocm_platform_id.h"
+#include "tensorflow/stream_executor/stream.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
@@ -163,6 +164,7 @@ port::Status ROCMFftPlan::Initialize(
     LOG(FATAL) << "Try to repeatedly initialize.";
   }
   is_initialized_ = true;
+  scratch_allocator_ = scratch_allocator;
   int elem_count_[3], input_embed_[3], output_embed_[3];
   for (int i = 0; i < rank; ++i) {
     elem_count_[i] = elem_count[i];
@@ -328,6 +330,8 @@ port::Status ROCMFftPlan::Initialize(GpuExecutor *parent, Stream *stream,
 
 port::Status ROCMFftPlan::UpdateScratchAllocator(
     Stream* stream, ScratchAllocator* scratch_allocator) {
+  scratch_allocator_ = scratch_allocator;
+
   if (scratch_size_bytes_ != 0) {
     auto allocated = scratch_allocator->AllocateBytes(scratch_size_bytes_);
     if (!allocated.ok() || (scratch_ = allocated.ValueOrDie()) == nullptr) {
@@ -509,7 +513,12 @@ template <typename FuncT, typename InputT, typename OutputT>
 bool ROCMFft::DoFftInternal(Stream *stream, fft::Plan *plan, FuncT hipfftExec,
                             const DeviceMemory<InputT> &input,
                             DeviceMemory<OutputT> *output) {
+  VLOG(-1) << "Here A1";
+
   ROCMFftPlan *rocm_fft_plan = dynamic_cast<ROCMFftPlan *>(plan);
+
+  DeviceMemory<InputT> input_maybe_copy = input;
+
   if (rocm_fft_plan == nullptr) {
     LOG(ERROR) << "the passed-in plan is not a ROCMFftPlan object.";
     return false;
@@ -519,9 +528,38 @@ bool ROCMFft::DoFftInternal(Stream *stream, fft::Plan *plan, FuncT hipfftExec,
     return false;
   }
 
-  auto ret = hipfftExec(parent_, rocm_fft_plan->GetPlan(),
-                        GpuComplex(const_cast<InputT *>(GpuMemory(input))),
-                        GpuComplex(GpuMemoryMutable(output)));
+  // Workaround a hipFFT bug, which mutates the input buffer when it shouldn't.
+  bool isR2C = std::is_same<InputT, float>::value;
+  bool isD2Z = std::is_same<InputT, double>::value;
+  VLOG(-1) << "Here A1_1"
+           << " : " << (input.opaque() != output->opaque() ? "TRUE" : "FALSE")
+           << " : " << ((isR2C || isD2Z) ? "TRUE" : "FALSE") << " : "
+           << input.size() << " : " << input_maybe_copy.size();
+  if (input.opaque() != output->opaque() && (isR2C || isD2Z) &&
+      input.size() > 0) {
+    VLOG(-1) << "Here A2";
+    auto* allocator = rocm_fft_plan->GetScratchAllocator();
+    if (allocator) {
+      VLOG(-1) << "Here A3";
+      auto allocated = allocator->AllocateBytes(input.size());
+      if (allocated.ok()) {
+        VLOG(-1) << "Here A4";
+        if (stream->ThenMemcpy(&allocated.ValueOrDie(), input, input.size())
+                .ok()) {
+          VLOG(-1) << "Here A5";
+          input_maybe_copy = DeviceMemory<InputT>(allocated.ValueOrDie());
+        }
+      }
+      // Keep going even the workaround fails, since we don't have a good
+      // bounding box. We don't want to give up on a potentially correct
+      // execution just because the allocation for the incorrect case fails.
+    }
+  }
+
+  auto ret =
+      hipfftExec(parent_, rocm_fft_plan->GetPlan(),
+                 GpuComplex(const_cast<InputT*>(GpuMemory(input_maybe_copy))),
+                 GpuComplex(GpuMemoryMutable(output)));
 
   if (ret != HIPFFT_SUCCESS) {
     LOG(ERROR) << "failed to run rocFFT routine: " << ret;
@@ -536,7 +574,12 @@ bool ROCMFft::DoFftWithDirectionInternal(Stream *stream, fft::Plan *plan,
                                          FuncT hipfftExec,
                                          const DeviceMemory<InputT> &input,
                                          DeviceMemory<OutputT> *output) {
+  VLOG(-1) << "Here B1";
+
   ROCMFftPlan *rocm_fft_plan = dynamic_cast<ROCMFftPlan *>(plan);
+
+  DeviceMemory<InputT> input_maybe_copy = input;
+
   if (rocm_fft_plan == nullptr) {
     LOG(ERROR) << "the passed-in plan is not a ROCMFftPlan object.";
     return false;
@@ -545,11 +588,39 @@ bool ROCMFft::DoFftWithDirectionInternal(Stream *stream, fft::Plan *plan,
   if (!SetStream(parent_, rocm_fft_plan->GetPlan(), stream)) {
     return false;
   }
+  // Workaround a hipFFT bug, which mutates the input buffer when it shouldn't.
+  // TODO(b/155276727): refine the bounding condition.
 
-  auto ret = hipfftExec(parent_, rocm_fft_plan->GetPlan(),
-                        GpuComplex(const_cast<InputT *>(GpuMemory(input))),
-                        GpuComplex(GpuMemoryMutable(output)),
-                        rocm_fft_plan->GetFftDirection());
+  bool isR2C = std::is_same<InputT, float>::value;  //  && std::is_same<OutputT,
+                                                    //  float>::value;
+  VLOG(-1) << "Here B1_1"
+           << " : " << (input.opaque() != output->opaque() ? "TRUE" : "FALSE")
+           << " : " << (isR2C ? "TRUE" : "FALSE") << " : " << input.size();
+
+  if (input.opaque() != output->opaque() && isR2C && input.size() > 0) {
+    VLOG(-1) << "Here B2";
+    auto* allocator = rocm_fft_plan->GetScratchAllocator();
+    if (allocator) {
+      VLOG(-1) << "Here B3";
+      auto allocated = allocator->AllocateBytes(input.size());
+      if (allocated.ok()) {
+        VLOG(-1) << "Here B4";
+        if (stream->ThenMemcpy(&allocated.ValueOrDie(), input, input.size())
+                .ok()) {
+          VLOG(-1) << "Here B5";
+          input_maybe_copy = DeviceMemory<InputT>(allocated.ValueOrDie());
+        }
+      }
+      // Keep going even the workaround fails, since we don't have a good
+      // bounding box. We don't want to give up on a potentially correct
+      // execution just because the allocation for the incorrect case fails.
+    }
+  }
+
+  auto ret = hipfftExec(
+      parent_, rocm_fft_plan->GetPlan(),
+      GpuComplex(const_cast<InputT*>(GpuMemory(input_maybe_copy))),
+      GpuComplex(GpuMemoryMutable(output)), rocm_fft_plan->GetFftDirection());
 
   if (ret != HIPFFT_SUCCESS) {
     LOG(ERROR) << "failed to run rocFFT routine: " << ret;
