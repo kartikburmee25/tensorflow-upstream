@@ -45,7 +45,11 @@ namespace tensorflow {
 namespace grappler {
 
 #if TENSORFLOW_USE_ROCM
+#if TF_ROCM_VERSION < 30900
 const std::array<std::string, 2> FP16SupportedDevices = {"906", "908"}; 
+#else
+const std::array<std::string, 2> FP16SupportedDevices = {"gfx906", "gfx908"}; 
+#endif // ROCM_VERSION < 30900 
 
 bool HasEnhancedFP16ComputeSupport(std::pair<int, int> gpu_arch){
     std::string arch = std::to_string(gpu_arch.first); 
@@ -61,7 +65,6 @@ namespace {
 const std::pair<int, int> kMinGPUArch = {7, 0};
 #elif TENSORFLOW_USE_ROCM
 const std::pair<int, int> kMinGPUArch = {906,0}; 
-// TODO change this to handle strings for ROCm 3.7
 #else
 const std::pair<int, int> kMinGPUArch = {0, 0};
 #endif
